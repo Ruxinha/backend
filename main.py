@@ -38,7 +38,7 @@ app = FastAPI()
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
-    allow_credentials=True,
+    allow_credentials=False,
     allow_methods=["*"],
     allow_headers=["*"],
 )
@@ -102,6 +102,7 @@ class ClientCreate(ClientBase):
     pass
 
 class Client(ClientBase):
+    user_id: str = ""
     id: str = Field(default_factory=lambda: str(uuid.uuid4()))
     total_revenue: float = 0.0
     transaction_count: int = 0
@@ -131,6 +132,7 @@ class CategoryUpdate(BaseModel):
     icon: Optional[str] = None
 
 class Category(CategoryBase):
+    user_id: str = ""
     id: str = Field(default_factory=lambda: str(uuid.uuid4()))
     created_at: datetime = Field(default_factory=datetime.utcnow)
 
@@ -148,6 +150,7 @@ class TransactionCreate(TransactionBase):
     pass
 
 class Transaction(TransactionBase):
+    user_id: str = ""
     id: str = Field(default_factory=lambda: str(uuid.uuid4()))
     created_at: datetime = Field(default_factory=datetime.utcnow)
 
@@ -185,6 +188,7 @@ class InvoiceCreate(InvoiceBase):
     pass
 
 class Invoice(InvoiceBase):
+    user_id: str = ""
     id: str = Field(default_factory=lambda: str(uuid.uuid4()))
     invoice_number: str = ""
     created_at: datetime = Field(default_factory=datetime.utcnow)
@@ -376,40 +380,41 @@ async def update_profile(updates: UserUpdate, current_user: dict = Depends(get_c
 # ==================== CATEGORY ROUTES ====================
 
 @api_router.get("/categories", response_model=List[Category])
-async def get_categories():
+async def get_categories(current_user: dict = Depends(get_current_user)):
     await seed_default_categories()
-    categories = await db.categories.find().to_list(1000)
+    categories = await db.categories.find({'user_id': current_user['id']}).to_list(1000)
     return [Category(**cat) for cat in categories]
 
 @api_router.post("/categories", response_model=Category)
-async def create_category(category: CategoryCreate):
+async def create_category(category: CategoryCreate, current_user: dict = Depends(get_current_user)):
     category_obj = Category(**category.dict())
+    category_obj.user_id = current_user['id']
     await db.categories.insert_one(category_obj.dict())
     return category_obj
 
 @api_router.delete("/categories/{category_id}")
-async def delete_category(category_id: str):
-    result = await db.categories.delete_one({"id": category_id})
+async def delete_category(category_id: str, current_user: dict = Depends(get_current_user)):
+    result = await db.categories.delete_one({'user_id': current_user['id'], "id": category_id})
     if result.deleted_count == 0:
         raise HTTPException(status_code=404, detail="Category not found")
     return {"message": "Category deleted"}
 
 @api_router.put("/categories/{category_id}", response_model=Category)
-async def update_category(category_id: str, updates: CategoryUpdate):
+async def update_category(category_id: str, updates: CategoryUpdate, current_user: dict = Depends(get_current_user)):
     update_data = {k: v for k, v in updates.dict().items() if v is not None}
     if not update_data:
         raise HTTPException(status_code=400, detail="No updates provided")
-    result = await db.categories.update_one({"id": category_id}, {"$set": update_data})
+    result = await db.categories.update_one({'user_id': current_user['id'], "id": category_id}, {"$set": update_data})
     if result.matched_count == 0:
         raise HTTPException(status_code=404, detail="Category not found")
-    updated = await db.categories.find_one({"id": category_id})
+    updated = await db.categories.find_one({'user_id': current_user['id'], "id": category_id})
     return Category(**updated)
 
 # ==================== CLIENT ROUTES ====================
 
 @api_router.get("/clients", response_model=List[Client])
-async def get_clients(search: Optional[str] = None, limit: int = 100):
-    query = {}
+async def get_clients(search: Optional[str] = None, limit: int = 100, current_user: dict = Depends(get_current_user)):
+    query = {'user_id': current_user['id']}
     if search:
         query["$or"] = [
             {"name": {"$regex": search, "$options": "i"}},
@@ -422,7 +427,7 @@ async def get_clients(search: Optional[str] = None, limit: int = 100):
     result = []
     for c in clients:
         # Get transactions for this client
-        transactions = await db.transactions.find({"client_id": c["id"]}).to_list(10000)
+        transactions = await db.transactions.find({'user_id': current_user['id'], "client_id": c["id"]}).to_list(10000)
         total_revenue = sum(t["amount"] for t in transactions if t["type"] == "income")
         c["total_revenue"] = total_revenue
         c["transaction_count"] = len(transactions)
@@ -431,26 +436,27 @@ async def get_clients(search: Optional[str] = None, limit: int = 100):
     return result
 
 @api_router.get("/clients/{client_id}", response_model=Client)
-async def get_client(client_id: str):
-    client = await db.clients.find_one({"id": client_id})
+async def get_client(client_id: str, current_user: dict = Depends(get_current_user)):
+    client = await db.clients.find_one({'user_id': current_user['id'], "id": client_id})
     if not client:
         raise HTTPException(status_code=404, detail="Client not found")
     
     # Calculate stats
-    transactions = await db.transactions.find({"client_id": client_id}).to_list(10000)
+    transactions = await db.transactions.find({'user_id': current_user['id'], "client_id": client_id}).to_list(10000)
     client["total_revenue"] = sum(t["amount"] for t in transactions if t["type"] == "income")
     client["transaction_count"] = len(transactions)
     
     return Client(**client)
 
 @api_router.post("/clients", response_model=Client)
-async def create_client(client: ClientCreate):
+async def create_client(client: ClientCreate, current_user: dict = Depends(get_current_user)):
     client_obj = Client(**client.dict())
+    client_obj.user_id = current_user['id']
     await db.clients.insert_one(client_obj.dict())
     return client_obj
 
 @api_router.put("/clients/{client_id}", response_model=Client)
-async def update_client(client_id: str, updates: ClientUpdate):
+async def update_client(client_id: str, updates: ClientUpdate, current_user: dict = Depends(get_current_user)):
     update_data = {k: v for k, v in updates.dict().items() if v is not None}
     if not update_data:
         raise HTTPException(status_code=400, detail="No updates provided")
@@ -464,36 +470,30 @@ async def update_client(client_id: str, updates: ClientUpdate):
         raise HTTPException(status_code=404, detail="Client not found")
     
     # Calculate stats
-    transactions = await db.transactions.find({"client_id": client_id}).to_list(10000)
+    transactions = await db.transactions.find({'user_id': current_user['id'], "client_id": client_id}).to_list(10000)
     result["total_revenue"] = sum(t["amount"] for t in transactions if t["type"] == "income")
     result["transaction_count"] = len(transactions)
     
     return Client(**result)
 
 @api_router.delete("/clients/{client_id}")
-async def delete_client(client_id: str):
-    result = await db.clients.delete_one({"id": client_id})
+async def delete_client(client_id: str, current_user: dict = Depends(get_current_user)):
+    result = await db.clients.delete_one({'user_id': current_user['id'], "id": client_id})
     if result.deleted_count == 0:
         raise HTTPException(status_code=404, detail="Client not found")
     return {"message": "Client deleted"}
 
 @api_router.get("/clients/{client_id}/transactions", response_model=List[Transaction])
-async def get_client_transactions(client_id: str, limit: int = 100):
+async def get_client_transactions(client_id: str, limit: int = 100, current_user: dict = Depends(get_current_user)):
     """Get all transactions for a specific client"""
-    transactions = await db.transactions.find({"client_id": client_id}).sort("date", -1).to_list(limit)
+    transactions = await db.transactions.find({'user_id': current_user['id'], "client_id": client_id}).sort("date", -1).to_list(limit)
     return [Transaction(**t) for t in transactions]
 
 # ==================== TRANSACTION ROUTES ====================
 
 @api_router.get("/transactions", response_model=List[Transaction])
-async def get_transactions(
-    type: Optional[str] = None,
-    category_id: Optional[str] = None,
-    start_date: Optional[str] = None,
-    end_date: Optional[str] = None,
-    limit: int = 100
-):
-    query = {}
+async def get_transactions(type: Optional[str] = None, category_id: Optional[str] = None, start_date: Optional[str] = None, end_date: Optional[str] = None, limit: int = 100, current_user: dict = Depends(get_current_user)):
+    query = {'user_id': current_user['id']}
     if type:
         query["type"] = type
     if category_id:
@@ -510,13 +510,14 @@ async def get_transactions(
     return [Transaction(**t) for t in transactions]
 
 @api_router.post("/transactions", response_model=Transaction)
-async def create_transaction(transaction: TransactionCreate):
+async def create_transaction(transaction: TransactionCreate, current_user: dict = Depends(get_current_user)):
     transaction_obj = Transaction(**transaction.dict())
+    transaction_obj.user_id = current_user['id']
     await db.transactions.insert_one(transaction_obj.dict())
     return transaction_obj
 
 @api_router.put("/transactions/{transaction_id}", response_model=Transaction)
-async def update_transaction(transaction_id: str, updates: TransactionUpdate):
+async def update_transaction(transaction_id: str, updates: TransactionUpdate, current_user: dict = Depends(get_current_user)):
     update_data = {k: v for k, v in updates.dict().items() if v is not None}
     if not update_data:
         raise HTTPException(status_code=400, detail="No updates provided")
@@ -531,8 +532,8 @@ async def update_transaction(transaction_id: str, updates: TransactionUpdate):
     return Transaction(**result)
 
 @api_router.delete("/transactions/{transaction_id}")
-async def delete_transaction(transaction_id: str):
-    result = await db.transactions.delete_one({"id": transaction_id})
+async def delete_transaction(transaction_id: str, current_user: dict = Depends(get_current_user)):
+    result = await db.transactions.delete_one({'user_id': current_user['id'], "id": transaction_id})
     if result.deleted_count == 0:
         raise HTTPException(status_code=404, detail="Transaction not found")
     return {"message": "Transaction deleted"}
@@ -540,29 +541,30 @@ async def delete_transaction(transaction_id: str):
 # ==================== INVOICE ROUTES ====================
 
 @api_router.get("/invoices", response_model=List[Invoice])
-async def get_invoices(status: Optional[str] = None, limit: int = 100):
-    query = {}
+async def get_invoices(status: Optional[str] = None, limit: int = 100, current_user: dict = Depends(get_current_user)):
+    query = {'user_id': current_user['id']}
     if status:
         query["status"] = status
     invoices = await db.invoices.find(query).sort("created_at", -1).to_list(limit)
     return [Invoice(**inv) for inv in invoices]
 
 @api_router.get("/invoices/{invoice_id}", response_model=Invoice)
-async def get_invoice(invoice_id: str):
-    invoice = await db.invoices.find_one({"id": invoice_id})
+async def get_invoice(invoice_id: str, current_user: dict = Depends(get_current_user)):
+    invoice = await db.invoices.find_one({'user_id': current_user['id'], "id": invoice_id})
     if not invoice:
         raise HTTPException(status_code=404, detail="Invoice not found")
     return Invoice(**invoice)
 
 @api_router.post("/invoices", response_model=Invoice)
-async def create_invoice(invoice: InvoiceCreate):
+async def create_invoice(invoice: InvoiceCreate, current_user: dict = Depends(get_current_user)):
     invoice_number = await get_next_invoice_number()
     invoice_obj = Invoice(**invoice.dict(), invoice_number=invoice_number)
+    invoice_obj.user_id = current_user['id']
     await db.invoices.insert_one(invoice_obj.dict())
     return invoice_obj
 
 @api_router.put("/invoices/{invoice_id}", response_model=Invoice)
-async def update_invoice(invoice_id: str, updates: InvoiceUpdate):
+async def update_invoice(invoice_id: str, updates: InvoiceUpdate, current_user: dict = Depends(get_current_user)):
     update_data = {k: v for k, v in updates.dict().items() if v is not None}
     if not update_data:
         raise HTTPException(status_code=400, detail="No updates provided")
@@ -577,8 +579,8 @@ async def update_invoice(invoice_id: str, updates: InvoiceUpdate):
     return Invoice(**result)
 
 @api_router.delete("/invoices/{invoice_id}")
-async def delete_invoice(invoice_id: str):
-    result = await db.invoices.delete_one({"id": invoice_id})
+async def delete_invoice(invoice_id: str, current_user: dict = Depends(get_current_user)):
+    result = await db.invoices.delete_one({'user_id': current_user['id'], "id": invoice_id})
     if result.deleted_count == 0:
         raise HTTPException(status_code=404, detail="Invoice not found")
     return {"message": "Invoice deleted"}
@@ -586,7 +588,7 @@ async def delete_invoice(invoice_id: str):
 # ==================== REPORTS ROUTES ====================
 
 @api_router.get("/reports/summary")
-async def get_financial_summary(period: str = "month"):
+async def get_financial_summary(period: str = "month", current_user: dict = Depends(get_current_user)):
     """Get financial summary for a period (week, month, year, all)"""
     now = datetime.utcnow()
     
@@ -600,7 +602,7 @@ async def get_financial_summary(period: str = "month"):
         start_date = datetime(2000, 1, 1)
     
     # Get transactions for the period
-    transactions = await db.transactions.find({"date": {"$gte": start_date}}).to_list(10000)
+    transactions = await db.transactions.find({'user_id': current_user['id'], "date": {"$gte": start_date}}).to_list(10000)
     
     total_income = sum(t["amount"] for t in transactions if t["type"] == "income")
     total_expenses = sum(t["amount"] for t in transactions if t["type"] == "expense")
@@ -630,7 +632,7 @@ async def get_financial_summary(period: str = "month"):
     }
 
 @api_router.get("/reports/trends")
-async def get_spending_trends(period: str = "month"):
+async def get_spending_trends(period: str = "month", current_user: dict = Depends(get_current_user)):
     """Get spending trends over time"""
     now = datetime.utcnow()
     
@@ -647,7 +649,7 @@ async def get_spending_trends(period: str = "month"):
         start_date = now - timedelta(days=30)
         group_by = "day"
     
-    transactions = await db.transactions.find({"date": {"$gte": start_date}}).to_list(10000)
+    transactions = await db.transactions.find({'user_id': current_user['id'], "date": {"$gte": start_date}}).to_list(10000)
     
     # Group by date
     trends = {}
@@ -675,7 +677,7 @@ async def get_spending_trends(period: str = "month"):
     }
 
 @api_router.get("/reports/monthly")
-async def get_monthly_summary(year: int = None):
+async def get_monthly_summary(year: int = None, current_user: dict = Depends(get_current_user)):
     """Get monthly financial summary for a year"""
     if year is None:
         year = datetime.utcnow().year
@@ -683,7 +685,7 @@ async def get_monthly_summary(year: int = None):
     start_date = datetime(year, 1, 1)
     end_date = datetime(year, 12, 31, 23, 59, 59)
     
-    transactions = await db.transactions.find({
+    transactions = await db.transactions.find({'user_id': current_user['id'], 
         "date": {"$gte": start_date, "$lte": end_date}
     }).to_list(10000)
     
@@ -709,13 +711,9 @@ async def get_monthly_summary(year: int = None):
 # ==================== EXPORT ROUTES ====================
 
 @api_router.get("/export/transactions")
-async def export_transactions(
-    type: Optional[str] = None,
-    start_date: Optional[str] = None,
-    end_date: Optional[str] = None
-):
+async def export_transactions(type: Optional[str] = None, start_date: Optional[str] = None, end_date: Optional[str] = None, current_user: dict = Depends(get_current_user)):
     """Export transactions to CSV"""
-    query = {}
+    query = {'user_id': current_user['id']}
     if type:
         query["type"] = type
     if start_date:
@@ -752,9 +750,9 @@ async def export_transactions(
     )
 
 @api_router.get("/export/invoices")
-async def export_invoices(status: Optional[str] = None):
+async def export_invoices(status: Optional[str] = None, current_user: dict = Depends(get_current_user)):
     """Export invoices to CSV"""
-    query = {}
+    query = {'user_id': current_user['id']}
     if status:
         query["status"] = status
     
@@ -788,7 +786,7 @@ async def export_invoices(status: Optional[str] = None):
     )
 
 @api_router.get("/export/report")
-async def export_financial_report(period: str = "month"):
+async def export_financial_report(period: str = "month", current_user: dict = Depends(get_current_user)):
     """Export financial report to CSV"""
     now = datetime.utcnow()
     
@@ -801,7 +799,7 @@ async def export_financial_report(period: str = "month"):
     else:
         start_date = datetime(2000, 1, 1)
     
-    transactions = await db.transactions.find({"date": {"$gte": start_date}}).to_list(10000)
+    transactions = await db.transactions.find({'user_id': current_user['id'], "date": {"$gte": start_date}}).to_list(10000)
     
     total_income = sum(t["amount"] for t in transactions if t["type"] == "income")
     total_expenses = sum(t["amount"] for t in transactions if t["type"] == "expense")
@@ -867,10 +865,10 @@ app.add_middleware(
 )
 
 @app.on_event("startup")
-async def startup_event():
+async def startup_event(current_user: dict = Depends(get_current_user)):
     await seed_default_categories(None)
     logger.info("Application started")
 
 @app.on_event("shutdown")
-async def shutdown_db_client():
+async def shutdown_db_client(current_user: dict = Depends(get_current_user)):
     client.close()
