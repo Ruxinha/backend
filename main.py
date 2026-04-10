@@ -35,6 +35,14 @@ db = client[os.environ.get('DB_NAME', 'finance_tracker')]
 # Create the main app without a prefix
 app = FastAPI()
 
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
 # Create a router with the /api prefix
 api_router = APIRouter(prefix="/api")
 
