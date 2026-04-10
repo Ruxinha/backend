@@ -112,6 +112,8 @@ class Client(ClientBase):
 
 class ClientUpdate(BaseModel):
     name: Optional[str] = None
+    type: Optional[str] = None
+    nif: Optional[str] = None
     email: Optional[str] = None
     phone: Optional[str] = None
     company: Optional[str] = None
